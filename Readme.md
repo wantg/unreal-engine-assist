@@ -1,3 +1,3 @@
 # Unreal Engine Assist
 
-<https://raw.githubusercontent.com/wantg/unreal-engine-assist/master/UnrealEngineAssist.png>
+![preview](https://media.githubusercontent.com/media/wantg/unreal-engine-assist/main/UnrealEngineAssist.png)
