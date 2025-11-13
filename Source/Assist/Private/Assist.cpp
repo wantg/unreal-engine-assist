@@ -49,6 +49,8 @@ void FAssistModule::init() {
 }
 
 void FAssistModule::RegisterMenus() {
+    // There are multiple ways to find out the name of a specific menu,
+    // but the easiest is entering the "ToolMenus.Edit 1" command in the Cmd input box in the bottom toolbar
     UToolMenus* ToolMenus = UToolMenus::Get();
     for (auto& MenuModule : AssistConfig.SupportedEditors) {
         FString MainMenuName       = MenuModule + ".MainMenu";

@@ -1,10 +1,10 @@
 @echo off
 
-set EngineVersion=5.5
+set EngineVersion=5.6
 
 for /f "skip=2 tokens=2*" %%a in ('reg query "HKEY_LOCAL_MACHINE\SOFTWARE\EpicGames\Unreal Engine\%EngineVersion%" /v "InstalledDirectory"') do set "EngineDirectory=%%b"
 
-@REM set EngineDirectory=D:\UnrealEngine
+set EngineDirectory=D:\UnrealEngine
 set AutomationToolPath="%EngineDirectory%\Engine\Build\BatchFiles\RunUAT.bat"
 set PluginPath="%cd%\Assist.uplugin"
 set OutputPath="%cd%\Build"
