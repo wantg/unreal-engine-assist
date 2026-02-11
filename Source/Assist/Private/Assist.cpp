@@ -10,6 +10,8 @@
 #include "Settings/ContentBrowserSettings.h"
 #include "AssistStyle.h"
 
+static const FName AssistTabName("Assist");
+
 #define LOCTEXT_NAMESPACE "FAssistModule"
 
 void FAssistModule::StartupModule() {
@@ -49,6 +51,9 @@ void FAssistModule::init() {
 }
 
 void FAssistModule::RegisterMenus() {
+    // Owner will be used for cleanup in call to UToolMenus::UnregisterOwner
+    FToolMenuOwnerScoped OwnerScoped(this);
+
     // There are multiple ways to find out the name of a specific menu,
     // but the easiest is entering the "ToolMenus.Edit 1" command in the Cmd input box in the bottom toolbar
     UToolMenus* ToolMenus = UToolMenus::Get();
