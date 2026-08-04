@@ -1,7 +1,11 @@
 #pragma once
 
 #include "Modules/ModuleManager.h"
+#include "Containers/Ticker.h"
 #include "AssistConfig.h"
+
+class SWindow;
+class SWidget;
 
 class FAssistModule : public IModuleInterface {
    public:
@@ -20,4 +24,13 @@ class FAssistModule : public IModuleInterface {
     void SetCurrentLanguage(const FString Language);
 
     void FindWidget(TSharedRef<SWidget> Parent, FString TypeString, TSharedPtr<SWidget>& Result);
+
+    void OnPostEngineInit();
+    bool ApplyContentBrowserToolWindowStyle();
+    bool TickApplyContentBrowserToolWindowStyle(float DeltaTime);
+    TSharedPtr<SWindow> FindContentBrowserWindow() const;
+
+    FDelegateHandle PostEngineInitHandle;
+    FTSTicker::FDelegateHandle ApplyStyleTickerHandle;
+    int32 ApplyStyleRetryCount = 0;
 };

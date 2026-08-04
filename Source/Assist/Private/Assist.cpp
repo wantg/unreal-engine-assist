@@ -6,11 +6,20 @@
 #include "FileHelpers.h"
 #include "UnrealEdGlobals.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "Misc/CoreDelegates.h"
 #include "SAssetView.h"
 #include "Settings/ContentBrowserSettings.h"
 #include "AssistStyle.h"
 
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <Windows.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
+
 static const FName AssistTabName("Assist");
+static constexpr int32 MaxApplyStyleRetries = 40;
+static constexpr float ApplyStyleRetryInterval = 0.25f;
 
 #define LOCTEXT_NAMESPACE "FAssistModule"
 
@@ -24,11 +33,30 @@ void FAssistModule::StartupModule() {
     // https://minifloppy.it/posts/2024/adding-custom-buttons-unreal-editor-toolbars-menus
     // Register a function to be called when menu system is initialized
     UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FAssistModule::RegisterMenus));
+
+#if PLATFORM_WINDOWS
+    PostEngineInitHandle = FCoreDelegates::OnPostEngineInit.AddRaw(this, &FAssistModule::OnPostEngineInit);
+    // Hot reload / late load: PostEngineInit may already have fired.
+    if (FSlateApplication::IsInitialized()) {
+        OnPostEngineInit();
+    }
+#endif
 }
 
 void FAssistModule::ShutdownModule() {
     // This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
     // we call this function before unloading the module.
+
+#if PLATFORM_WINDOWS
+    if (PostEngineInitHandle.IsValid()) {
+        FCoreDelegates::OnPostEngineInit.Remove(PostEngineInitHandle);
+        PostEngineInitHandle.Reset();
+    }
+    if (ApplyStyleTickerHandle.IsValid()) {
+        FTSTicker::GetCoreTicker().RemoveTicker(ApplyStyleTickerHandle);
+        ApplyStyleTickerHandle.Reset();
+    }
+#endif
 
     // Unregister the startup function
     UToolMenus::UnRegisterStartupCallback(this);
@@ -224,19 +252,13 @@ void FAssistModule::SetLayout(const bool IsHorizontal) {
     RootWindow->ReshapeWindow(RootWindowPosition, RootWindowSize);
 
     // Reshape Content Browser Window
-    TSharedPtr<SWindow> ContentBrowserWindow = nullptr;
-    TArray<TSharedRef<SWindow>> AllVisibleWindowsOrdered;
-    FSlateApplication::Get().GetAllVisibleWindowsOrdered(AllVisibleWindowsOrdered);
-    for (auto Window : AllVisibleWindowsOrdered) {
-        if (Window->GetTitle().EqualTo(FText::FromString("Content Browser"))) {
-            ContentBrowserWindow = Window;
-            break;
-        }
-    }
+    TSharedPtr<SWindow> ContentBrowserWindow = FindContentBrowserWindow();
     if (ContentBrowserWindow) {
         FVector2D Position = IsHorizontal ? FVector2D::Zero() : FVector2D(0, AvailableDisplayHeight - BottomPanelHeight);
         FVector2D Size     = IsHorizontal ? FVector2D(LeftPanelWidth, AvailableDisplayHeight) : FVector2D(DisplayWidth, BottomPanelHeight);
         ContentBrowserWindow->ReshapeWindow(Position, Size);
+        ApplyContentBrowserToolWindowStyle();
+
         TSharedRef<SWidget> Content = ContentBrowserWindow->GetContent();
         TSharedPtr<SWidget> Result  = nullptr;
         FindWidget(Content, "SAssetView", Result);
@@ -248,6 +270,93 @@ void FAssistModule::SetLayout(const bool IsHorizontal) {
             GetMutableDefault<UContentBrowserSettings>()->PostEditChange();
         }
     }
+}
+
+void FAssistModule::OnPostEngineInit() {
+#if PLATFORM_WINDOWS
+    ApplyStyleRetryCount = 0;
+    if (ApplyStyleTickerHandle.IsValid()) {
+        FTSTicker::GetCoreTicker().RemoveTicker(ApplyStyleTickerHandle);
+        ApplyStyleTickerHandle.Reset();
+    }
+    ApplyStyleTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+        FTickerDelegate::CreateRaw(this, &FAssistModule::TickApplyContentBrowserToolWindowStyle),
+        ApplyStyleRetryInterval);
+#endif
+}
+
+bool FAssistModule::TickApplyContentBrowserToolWindowStyle(float DeltaTime) {
+#if PLATFORM_WINDOWS
+    if (ApplyContentBrowserToolWindowStyle()) {
+        ApplyStyleTickerHandle.Reset();
+        return false;
+    }
+
+    ++ApplyStyleRetryCount;
+    if (ApplyStyleRetryCount >= MaxApplyStyleRetries) {
+        ApplyStyleTickerHandle.Reset();
+        return false;
+    }
+    return true;
+#else
+    return false;
+#endif
+}
+
+TSharedPtr<SWindow> FAssistModule::FindContentBrowserWindow() const {
+    if (!FSlateApplication::IsInitialized()) {
+        return nullptr;
+    }
+
+    TArray<TSharedRef<SWindow>> AllVisibleWindowsOrdered;
+    FSlateApplication::Get().GetAllVisibleWindowsOrdered(AllVisibleWindowsOrdered);
+    for (const TSharedRef<SWindow>& Window : AllVisibleWindowsOrdered) {
+        const FString Title = Window->GetTitle().ToString();
+        if (Title.Equals(TEXT("Content Browser")) || Title.Equals(TEXT("内容浏览器"))) {
+            return Window;
+        }
+    }
+    return nullptr;
+}
+
+bool FAssistModule::ApplyContentBrowserToolWindowStyle() {
+#if PLATFORM_WINDOWS
+    TSharedPtr<SWindow> ContentBrowserWindow = FindContentBrowserWindow();
+    if (!ContentBrowserWindow.IsValid()) {
+        return false;
+    }
+
+    TSharedPtr<SWindow> RootWindow = FGlobalTabmanager::Get()->GetRootWindow();
+    if (!RootWindow.IsValid()) {
+        return false;
+    }
+
+    TSharedPtr<FGenericWindow> NativeWindow = ContentBrowserWindow->GetNativeWindow();
+    if (!NativeWindow.IsValid()) {
+        return false;
+    }
+
+    HWND ContentBrowserHwnd = static_cast<HWND>(NativeWindow->GetOSWindowHandle());
+    if (!ContentBrowserHwnd) {
+        return false;
+    }
+
+    if (TSharedPtr<FGenericWindow> RootNativeWindow = RootWindow->GetNativeWindow()) {
+        if (HWND RootHwnd = static_cast<HWND>(RootNativeWindow->GetOSWindowHandle())) {
+            SetWindowLongPtr(ContentBrowserHwnd, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(RootHwnd));
+        }
+    }
+
+    LONG_PTR ExStyle = GetWindowLongPtr(ContentBrowserHwnd, GWL_EXSTYLE);
+    ExStyle &= ~WS_EX_APPWINDOW;
+    ExStyle |= WS_EX_TOOLWINDOW;
+    SetWindowLongPtr(ContentBrowserHwnd, GWL_EXSTYLE, ExStyle);
+    SetWindowPos(ContentBrowserHwnd, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    return true;
+#else
+    return false;
+#endif
 }
 
 void FAssistModule::SetCurrentLanguage(const FString Language) {
